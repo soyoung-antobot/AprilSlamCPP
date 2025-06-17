@@ -156,7 +156,7 @@ void publishMapToOdomTF(tf2_ros::TransformBroadcaster& tf_broadcaster,
     }
 }
 
-void publishRefinedOdom(ros::Publisher& odom_pub,
+void publishRefinedOdom(tf2_ros::TransformBroadcaster& tf_broadcaster,ros::Publisher& odom_pub,
                         const gtsam::Values& Estimates_visulisation,
                         int index_of_pose,
                         const std::string& odom_frame,
@@ -182,8 +182,8 @@ void publishRefinedOdom(ros::Publisher& odom_pub,
     // 3) Fill nav_msgs::Odometry
     nav_msgs::Odometry odom_msg;
     odom_msg.header.stamp = stamp;
-    odom_msg.header.frame_id = odom_frame;       // e.g. "odom"
-    odom_msg.child_frame_id  = base_link_frame;  // e.g. "base_link"
+    odom_msg.header.frame_id = "map";       // e.g. "odom"
+    odom_msg.child_frame_id  = "base_link";  // e.g. "base_link"
 
     // Position
     odom_msg.pose.pose.position.x = refinedPose.x();
@@ -203,6 +203,25 @@ void publishRefinedOdom(ros::Publisher& odom_pub,
                     << refinedPose.x() << ","
                     << refinedPose.y() << ","
                     << refinedPose.theta() << std::endl;
+    
+
+    // Publish the map -> base_link transform for Antobot integration
+    geometry_msgs::TransformStamped transform_stamped;
+    transform_stamped.header.stamp = ros::Time::now();
+    transform_stamped.header.frame_id = "map";  // map
+    transform_stamped.child_frame_id = "base_link"; // odom
+
+    // Set translation
+    transform_stamped.transform.translation.x = refinedPose.x();
+    transform_stamped.transform.translation.y = refinedPose.y();
+    transform_stamped.transform.translation.z = 0.0;
+    ROS_WARN("x %f y %f", transform_stamped.transform.translation.x, transform_stamped.transform.translation.y);
+
+    // Set rotation
+    transform_stamped.transform.rotation = tf2::toMsg(quat);
+
+    // Broadcast the transform
+    tf_broadcaster.sendTransform(transform_stamped);
 
 }
 

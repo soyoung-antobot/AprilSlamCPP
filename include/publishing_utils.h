@@ -31,7 +31,7 @@ namespace aprilslam {
                             const gtsam::Values& result, int latest_index, 
                             const gtsam::Pose2& poseSE2, 
                             const std::string& map_frame, const std::string& odom_frame, const std::string& base_link_frame);
-    void publishRefinedOdom(ros::Publisher& odom_pub,
+    void publishRefinedOdom(tf2_ros::TransformBroadcaster& tf_broadcaster, ros::Publisher& odom_pub,
                         const gtsam::Values& Estimates_visulisation,
                         int index_of_pose,
                         const std::string& odom_frame,      
