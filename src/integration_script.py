@@ -72,7 +72,26 @@ class StaticUTMToMapBroadcaster:
             rospy.loginfo(f"Initialized UTM transformer with EPSG:{self.epsg_code}")
 
         easting, northing = self.transformer_to_utm.transform(lon, lat)
-        self.utm_coords = (easting, northing)
+
+        # Always store raw GPS UTM (antenna)
+        self.raw_gps_utm = (easting, northing)
+
+        # Only update self.utm_coords (base_link UTM) if yaw is ready
+        if self.imu_yaw is not None:
+            gps_offset_x = 0.70   # forward (x)
+            gps_offset_y = -0.13  # left (y)
+
+            cos_yaw = math.cos(self.imu_yaw)
+            sin_yaw = math.sin(self.imu_yaw)
+            offset_x_utm = cos_yaw * gps_offset_x - sin_yaw * gps_offset_y
+            offset_y_utm = sin_yaw * gps_offset_x + cos_yaw * gps_offset_y
+
+            base_link_utm_x = easting - offset_x_utm
+            base_link_utm_y = northing - offset_y_utm
+            self.utm_coords = (base_link_utm_x, base_link_utm_y)
+        else:
+            self.utm_coords = None  # Can't update base_link position until yaw is ready
+
 
         self.try_publish_static_transform()
 
@@ -83,23 +102,15 @@ class StaticUTMToMapBroadcaster:
                 robot_map_y = tf_map_base.transform.translation.y
                 rospy.loginfo(f"Robot pose in map: x={robot_map_x:.3f}, y={robot_map_y:.3f}")
 
-                # Extract static utm -> map transform
                 tf_utm_map = self.utm_to_map_transform
                 tx = tf_utm_map.transform.translation.x
                 ty = tf_utm_map.transform.translation.y
                 q = tf_utm_map.transform.rotation
                 _, _, yaw = tf.transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
 
-                # Rotate the map position into the UTM frame
                 rotated_x, rotated_y = rotate_point(robot_map_x, robot_map_y, yaw)
-
-                # Then add translation to get full base_link UTM position
-                utm_origin_x = self.utm_to_map_transform.transform.translation.x
-                utm_origin_y = self.utm_to_map_transform.transform.translation.y
-
-                base_utm_x = utm_origin_x + rotated_x
-                base_utm_y = utm_origin_y + rotated_y
-
+                base_utm_x = tx + rotated_x
+                base_utm_y = ty + rotated_y
 
                 lon_dbg, lat_dbg = self.transformer_to_geo.transform(base_utm_x, base_utm_y)
                 rospy.loginfo(f"[DEBUG] Updated GPS Fix: ({lat:.8f}, {lon:.8f}) | Computed base_link UTM: ({base_utm_x:.2f}, {base_utm_y:.2f}) -> ({lat_dbg:.8f}, {lon_dbg:.8f})")
@@ -107,7 +118,6 @@ class StaticUTMToMapBroadcaster:
                 dist = haversine(lat, lon, lat_dbg, lon_dbg)
                 rospy.loginfo(f"[DEBUG] Distance between GPS and base_link positions: {dist:.2f} meters")
 
-                # Publish filtered GPS
                 filtered_msg = NavSatFix()
                 filtered_msg.header.stamp = rospy.Time.now()
                 filtered_msg.header.frame_id = "base_link"
@@ -143,27 +153,29 @@ class StaticUTMToMapBroadcaster:
 
         print("------------------------")
 
-        # Correct yaw: the difference between UTM (IMU) heading and map frame heading
-        yaw_offset = self.imu_yaw - yaw_in_map  #
+        # Use already-corrected base_link UTM coordinates
+        base_link_utm_x, base_link_utm_y = self.utm_coords
 
+
+
+        # Compute the yaw offset between UTM (IMU) heading and map heading
+        yaw_offset = self.imu_yaw - yaw_in_map
+        rospy.loginfo(f"[DEBUG] Yaw offset = {math.degrees(yaw_offset):.2f} degrees")
+
+        # Rotate base_link map position into UTM frame
         cos_yaw = math.cos(yaw_offset)
         sin_yaw = math.sin(yaw_offset)
-
-        # Get GPS UTM
-        gps_utm_x, gps_utm_y = self.utm_coords
-
-        # Rotate robot's position in map frame into UTM frame
         dx = cos_yaw * robot_map_x - sin_yaw * robot_map_y
         dy = sin_yaw * robot_map_x + cos_yaw * robot_map_y
 
-        map_origin_utm_x = gps_utm_x - dx
-        map_origin_utm_y = gps_utm_y - dy
+        # UTM origin of map frame = base_link_utm - rotated map position
+        map_origin_utm_x = base_link_utm_x - dx
+        map_origin_utm_y = base_link_utm_y - dy
 
         # Apply the yaw offset for map frame
         quat = tf.transformations.quaternion_from_euler(0, 0, yaw_offset)
 
-
-        # Prepare static transform
+        # 9. Publish static transform from utm -> map
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
         t.header.frame_id = "utm"
@@ -171,8 +183,6 @@ class StaticUTMToMapBroadcaster:
         t.transform.translation.x = map_origin_utm_x
         t.transform.translation.y = map_origin_utm_y
         t.transform.translation.z = 0.0
-
-        #quat = tf.transformations.quaternion_from_euler(0, 0, self.imu_yaw)
         t.transform.rotation.x = quat[0]
         t.transform.rotation.y = quat[1]
         t.transform.rotation.z = quat[2]
@@ -182,7 +192,7 @@ class StaticUTMToMapBroadcaster:
         self.utm_to_map_transform = t
         self.transform_sent = True
 
-        rospy.loginfo(f"Published static utm->map transform with yaw offset {math.degrees(self.imu_yaw):.3f} degrees")
+        rospy.loginfo(f"Published static utm->map transform with yaw offset {math.degrees(yaw_offset):.3f} degrees")
         rospy.loginfo(f"Map origin in UTM: ({map_origin_utm_x:.2f}, {map_origin_utm_y:.2f})")
 
     @staticmethod
