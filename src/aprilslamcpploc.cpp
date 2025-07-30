@@ -69,6 +69,7 @@ aprilslamcpp::aprilslamcpp(ros::NodeHandle node_handle)
     nh_.getParam("distanceThreshold", distanceThreshold);
     nh_.getParam("rotationThreshold", rotationThreshold);
     nh_.getParam("usekeyframe", usekeyframe);
+    gtsam::Values landmarkEstimates;  // for unwhitten error computing 
 
     // Stationay conditions
     nh_.getParam("stationary_position_threshold", stationary_position_threshold);
@@ -86,20 +87,68 @@ aprilslamcpp::aprilslamcpp(ros::NodeHandle node_handle)
     nh_.getParam("savetaglocation", savetaglocation);
     nh_.getParam("usepriortagtable", usepriortagtable);
 
-    // Camera transformation parameters
-    nh_.getParam("camera_parameters/xyTrans_lcam_baselink", xyTrans_lcam_baselink);
-    nh_.getParam("camera_parameters/xyTrans_rcam_baselink", xyTrans_rcam_baselink);
-    nh_.getParam("camera_parameters/xyTrans_mcam_baselink", xyTrans_mcam_baselink);
-    // Convert to Eigen::Vector3d
-    mcam_baselink_transform = Eigen::Vector3d(xyTrans_mcam_baselink[0], xyTrans_mcam_baselink[1], xyTrans_mcam_baselink[2]);
-    rcam_baselink_transform = Eigen::Vector3d(xyTrans_rcam_baselink[0], xyTrans_rcam_baselink[1], xyTrans_rcam_baselink[2]);
-    lcam_baselink_transform = Eigen::Vector3d(xyTrans_lcam_baselink[0], xyTrans_lcam_baselink[1], xyTrans_lcam_baselink[2]);
 
     // Load camera topics
-    nh_.getParam("camera_subscribers/lCam_subscriber/topic", lCam_topic);
-    nh_.getParam("camera_subscribers/rCam_subscriber/topic", rCam_topic);
-    nh_.getParam("camera_subscribers/mCam_subscriber/topic", mCam_topic);
+    if (nh_.getParam("camera_config/cameras", camera_list) && camera_list.getType() == XmlRpc::XmlRpcValue::TypeArray) {
+        for (int i = 0; i < camera_list.size(); ++i) {
+            if (camera_list[i].getType() != XmlRpc::XmlRpcValue::TypeStruct) continue;
 
+            std::string name = static_cast<std::string>(camera_list[i]["name"]);
+            std::string topic = static_cast<std::string>(camera_list[i]["topic"]);
+            std::string frame_id = static_cast<std::string>(camera_list[i]["frame"]);
+
+            Eigen::Vector3d transform(0.0, 0.0, 0.0);
+
+            camera_infos_.emplace_back(CameraInfo{name, topic, frame_id, transform});
+        }
+    } else {
+        ROS_WARN("Failed to load camera_config/cameras or invalid format.");
+    }
+
+    // Wait for static transforms using frame_id
+    for (auto& cam : camera_infos_) {
+        tf2::Transform tf;
+        const int max_attempts = 20;
+        const ros::Duration retry_interval(0.5);
+        bool success = false;
+
+        for (int attempt = 0; attempt < max_attempts; ++attempt) {
+            if (getStaticTransform(robot_frame, cam.frame_id, tf)) {
+                
+                tf2::Vector3 trans = tf.getOrigin();
+                tf2::Quaternion rot = tf.getRotation();
+
+                // Convert to Eigen
+                Eigen::Vector3d tf_trans(trans.x(), trans.y(), trans.z());
+                Eigen::Quaterniond tf_rot(rot.w(), rot.x(), rot.y(), rot.z());
+                Eigen::Matrix3d R = tf_rot.toRotationMatrix();
+
+                Eigen::Vector3d z_axis_robot = R.col(2); 
+                z_axis_robot.z() = 0.0;  
+                z_axis_robot.normalize();  
+                double yaw = std::atan2(z_axis_robot.y(), z_axis_robot.x()); 
+
+                // Final transform
+                cam.transform = Eigen::Vector3d(tf_trans.x(), tf_trans.y(), yaw);
+                ROS_INFO("TF loaded for [%s] (%s): (%.2f, %.2f, %.2f rad)",
+                        cam.name.c_str(), cam.frame_id.c_str(), tf_trans.x(), tf_trans.y(), yaw);
+                success = true;
+                break;
+            } else {
+                ROS_WARN("Waiting for static TF from %s to %s... (attempt %d)",
+                        robot_frame.c_str(), cam.frame_id.c_str(), attempt + 1);
+                retry_interval.sleep();
+            }
+        }
+
+        if (!success) {
+            ROS_ERROR("Failed to get static transform for camera %s (%s). Shutting down.",
+                    cam.name.c_str(), cam.frame_id.c_str());
+            ros::shutdown();
+            return;
+        }
+    }
+ 
     // Load outlier removal conditons
     nh_.getParam("useoutlierremoval", useoutlierremoval); 
     nh_.getParam("jumpCombinedThreshold", jumpCombinedThreshold); 
@@ -148,9 +197,14 @@ aprilslamcpp::aprilslamcpp(ros::NodeHandle node_handle)
     keyframeGraph_ = gtsam::NonlinearFactorGraph();
 
     // Initialize camera subscribers
-    mCam_subscriber = nh_.subscribe(mCam_topic, 1000, &aprilslamcpp::mCamCallback, this);
-    rCam_subscriber = nh_.subscribe(rCam_topic, 1000, &aprilslamcpp::rCamCallback, this);
-    lCam_subscriber = nh_.subscribe(lCam_topic, 1000, &aprilslamcpp::lCamCallback, this);
+    
+    for (const auto& cam : camera_infos_) {
+        ros::Subscriber sub = nh_.subscribe<apriltag_ros::AprilTagDetectionArray>(
+            cam.topic, 1,
+            boost::bind(&aprilslamcpp::cameraCallback, this, _1, cam.name)
+        );
+        camera_subscribers_.push_back(sub);
+    }
     
     // Initialise pose0 using particle filter, set a timer to ensure the initilisation is done properly
     if (usePFinitialise) {
@@ -193,8 +247,7 @@ void aprilslamcpp::pfInitCallback(const ros::TimerEvent& event) {
     }
 
     // Attempt to get camera detections
-    auto detections = getCamDetections(mCam_msg, rCam_msg, lCam_msg,
-                                       mcam_baselink_transform, rcam_baselink_transform, lcam_baselink_transform);
+    auto detections = getCamDetections(camera_infos_, camera_detections_);
     const std::vector<int>& Id = detections.first;
     const std::vector<Eigen::Vector2d>& tagPos = detections.second;
         
@@ -278,17 +331,31 @@ void aprilslamcpp::pfInitCallback(const ros::TimerEvent& event) {
     }
 }
 
-// Camera callback functions
-void aprilslamcpp::mCamCallback(const apriltag_ros::AprilTagDetectionArray::ConstPtr& msg) {
-    mCam_msg = msg;
+void aprilslamcpp::cameraCallback(
+    const apriltag_ros::AprilTagDetectionArray::ConstPtr& msg,
+    const std::string& camera_name) {
+    
+    if (!msg->detections.empty()) {
+        camera_detections_[camera_name] = msg;
+    } else {
+        camera_detections_.erase(camera_name);
+    }
 }
 
-void aprilslamcpp::rCamCallback(const apriltag_ros::AprilTagDetectionArray::ConstPtr& msg) {
-    rCam_msg = msg;
-}
-
-void aprilslamcpp::lCamCallback(const apriltag_ros::AprilTagDetectionArray::ConstPtr& msg) {
-    lCam_msg = msg;
+bool aprilslamcpp::getStaticTransform(const std::string& target_frame,
+                                      const std::string& source_frame,
+                                      tf2::Transform& out_tf) {
+    try {
+        geometry_msgs::TransformStamped transform_stamped =
+            tf_buffer_.lookupTransform(target_frame, source_frame,
+                                       ros::Time(0), ros::Duration(2.0));
+        tf2::fromMsg(transform_stamped.transform, out_tf);
+        return true;
+    } catch (tf2::TransformException& ex) {
+        ROS_WARN("Could not get static transform from %s to %s: %s",
+                 source_frame.c_str(), target_frame.c_str(), ex.what());
+        return false;
+    }
 }
 
 // Applies a moving average filter to smooth the trajectory
@@ -760,11 +827,10 @@ void aprilslam::aprilslamcpp::addOdomFactor(const nav_msgs::Odometry::ConstPtr& 
 
         // Iterate through all landmark detected IDs
         start_loop = ros::WallTime::now();
-        if (mCam_msg && rCam_msg && lCam_msg) {  // Ensure the messages have been received
-            auto detections = getCamDetections(mCam_msg, rCam_msg, lCam_msg, mcam_baselink_transform, rcam_baselink_transform, lcam_baselink_transform);
+        auto detections = getCamDetections(camera_infos_, camera_detections_);
+        if (!detections.first.empty()) {
             detectedLandmarksCurrentPos = updateGraphWithLandmarks(detectedLandmarksCurrentPos, detections);
-        }
-
+        } 
         // Update the pose to landmarks mapping (for LC conditions)
         poseToLandmarks[gtsam::Symbol('X', index_of_pose)] = detectedLandmarksCurrentPos;
 

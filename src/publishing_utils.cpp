@@ -300,21 +300,21 @@ void processDetections(const apriltag_ros::AprilTagDetectionArray::ConstPtr& cam
 
 // funtion for processing tag detection topics into IDs and TagPoss
 std::pair<std::vector<int>, std::vector<Eigen::Vector2d>> getCamDetections(
-    const apriltag_ros::AprilTagDetectionArray::ConstPtr& mCam_msg,
-    const apriltag_ros::AprilTagDetectionArray::ConstPtr& rCam_msg,
-    const apriltag_ros::AprilTagDetectionArray::ConstPtr& lCam_msg,
-    const Eigen::Vector3d& xyTrans_mcam_baselink,
-    const Eigen::Vector3d& xyTrans_rcam_baselink,
-    const Eigen::Vector3d& xyTrans_lcam_baselink) {
+    const std::vector<CameraInfo>& camera_infos,
+    const std::map<std::string, apriltag_ros::AprilTagDetectionArray::ConstPtr>& camera_detections) {
 
     std::vector<int> Ids;
     std::vector<Eigen::Vector2d> tagPoss;
 
-    // Process detections from each camera
-    processDetections(mCam_msg, xyTrans_mcam_baselink, Ids, tagPoss);
-    processDetections(rCam_msg, xyTrans_rcam_baselink, Ids, tagPoss);
-    processDetections(lCam_msg, xyTrans_lcam_baselink, Ids, tagPoss);
+    for (const auto& cam : camera_infos) {
+        auto it = camera_detections.find(cam.name);
+        if (it == camera_detections.end()) {
+            continue;
+        }
 
+        // This calls the original processDetections with the correct transformation
+        processDetections(it->second, cam.transform, Ids, tagPoss);
+    }
     return std::make_pair(Ids, tagPoss);
 }
 

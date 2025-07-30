@@ -1,5 +1,6 @@
 odom_topic: "robot/dlo/odom_node/odom"
-robot_frame: "robot/base_link"
+robot_frame: "robot/base_link"  # lboro data
+# robot_frame: "base_link"  # antobot data
 trajectory_topic: "trajectory"
 map_frame_id: "TagMap"
 pathtosavelandmarkcsv: "config/afteroptimisation.csv"
@@ -34,23 +35,29 @@ noise_models:
     - 0.01
     - 0.01
 
-# Camera parameters
-camera_parameters:
-  xyTrans_lcam_baselink: [0, 0, 1.57079632679]  # pi/2 in radians
-  xyTrans_mcam_baselink: [0, 0, 0]
-  xyTrans_rcam_baselink: [0, 0, -1.57079632679]  # -pi/2 in radians
+# Camera configuration
+camera_config:
+  cameras:
+    - name: lCam
+      topic: "/l/tag_detections"
+      frame: "usb_cam_l"
+      transform: [0, 0, 1.57079632679]
+    - name: rCam
+      topic: "/r/tag_detections"
+      transform: [0, 0, -1.57079632679]
+      frame: "usb_cam_r"
+    - name: mCam
+      topic: "/m/tag_detections"
+      transform: [0.0, 0.0, 0.0]
+      frame: "usb_cam_m"
 
-# Camera subscribers
-camera_subscribers:
-  lCam_subscriber:
-    topic: "/l/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
-  rCam_subscriber:
-    topic: "/r/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
-  mCam_subscriber:
-    topic: "/m/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
+# camera_config:
+#   cameras:
+#     - name: picam1
+#       topic: "/antobot/picam1/tag_detections"
+#       frame: "picam1"
+#       transform: [0, 0, 0.39]
+#     - name: picam2
+#       topic: "/antobot/picam2/tag_detections"
+#       frame: "picam2"
+#       transform: [0, 0, -0.39]

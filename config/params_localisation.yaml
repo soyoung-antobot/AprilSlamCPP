@@ -1,11 +1,12 @@
 odom_topic: "robot/dlo/odom_node/odom"
-odom_frame: "robot/odom"
-robot_frame: "robot/base_link"
+odom_frame: "robot/odom"  # lboro data
+robot_frame: "robot/base_link"  # lboro data
+# odom_frame: "odom"  # antobot data
+# robot_frame: "base_link"  # antobot data
 trajectory_topic: "trajectory"
 map_frame_id: "TagMap"
 pathtosavelandmarkcsv: "config/landmark.csv"
 pathtoloadlandmarkcsv: "config/afteroptimisation.csv"
-ud_frame: "robot/base_link"
 savetaglocation: false
 usepriortagtable: true
 batch_optimisation: true
@@ -29,7 +30,7 @@ historyKeyframeSearchNum: 40 # loopclosure only checking historyKeyframeSearchNu
 requiredReobservedLandmarks: 3 
 
 # Stationary threshold
-stationary_position_threshold: 0.05 # 5cm
+stationary_position_threshold: 0.05 # 5cm // direction of camera's optical axis in 2D
 stationary_rotation_threshold: 0.1 # 0.1radius
 
 # Keyframe info, no need to use it if in isam2 mode
@@ -67,12 +68,6 @@ noise_models:
     - 5
     - 0.5
 
-# Camera parameters
-camera_parameters:
-  xyTrans_lcam_baselink: [0, 0, 1.57079632679]  # pi/2 in radians
-  xyTrans_mcam_baselink: [0, 0, 0]
-  xyTrans_rcam_baselink: [0, 0, -1.57079632679]  # -pi/2 in radians
-
 # Outlier removal
 useoutlierremoval: true
 # jumpCombinedThreshold: 1.0
@@ -83,17 +78,27 @@ usetrajsmoothing: true
 smoothingStartIndex_: 20 # give it 20s to initilise before smoother kicks in
 smoothingwindow: 5
 
-# Camera subscribers
-camera_subscribers:
-  lCam_subscriber:
-    topic: "/l/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
-  rCam_subscriber:
-    topic: "/r/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
-  mCam_subscriber:
-    topic: "/m/tag_detections"
-    type: "apriltag_ros/AprilTagDetectionArray"
-    data_format: "struct"
+# Camera configuration
+camera_config:
+  cameras:
+    - name: lCam
+      topic: "/l/tag_detections"
+      frame: "usb_cam_l"
+    - name: rCam
+      topic: "/r/tag_detections"
+      frame: "usb_cam_r"
+    - name: mCam
+      topic: "/m/tag_detections"
+      frame: "usb_cam_m"
+
+
+# camera_config:
+#   cameras:
+#     - name: picam1
+#       topic: "/antobot/picam1/tag_detections"
+#       frame: "picam1"
+#       transform: [0, 0, 0.39]
+#     - name: picam2
+#       topic: "/antobot/picam2/tag_detections"
+#       frame: "picam2"
+#       transform: [0, 0, -0.39]
