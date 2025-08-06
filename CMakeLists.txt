@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 project(aprilslamcpp)
 
 # Set GTSAM_DIR to the directory containing GTSAMConfig.cmake
-set(GTSAM_DIR "/home/shu/GTSAM/build")
+set(GTSAM_DIR "/home/antobot/gtsam_ws/gtsam/build")
 set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_BUILD_TYPE "Debug")
 
@@ -21,6 +21,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   pcl_conversions
   apriltag_ros
+  GTSAM REQUIRED
 )
 
 find_package(Eigen3 REQUIRED)
